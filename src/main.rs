@@ -5,7 +5,7 @@ use clap::*;
 
 fn main() {
     let matches = App::new("Gleam finder")
-        .version("1.0")
+        .version("1.1")
         .author("Mubelotix <mubelotix@gmail.com>")
         .about("Search for gleam links on the web.")
         .arg(
@@ -36,7 +36,9 @@ fn main() {
     let mut page: usize = 0;
     let mut ended = false;
     while !ended {
-        println!("\x1B[0;34mloading google page {}", page);
+        if !minimal {
+            println!("\x1B[0;34mloading google page {}", page);
+        }
         let results = google::search("\"gleam.io\"+site:youtube.com&tbs=qdr:h&filter=0", page+1);
         if results.len() <= 0 {
             ended = true;
