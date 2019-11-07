@@ -1,0 +1,9 @@
+[package]
+name = "gleam_finder_client"
+version = "0.1.0"
+authors = ["Mubelotix <unbeliever.in.time@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+gleam_finder = "0.1.1"
+clap = "2.33.0"
