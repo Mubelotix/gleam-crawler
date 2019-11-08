@@ -33,34 +33,19 @@ fn main() {
 
     let cooldown: u64 = matches.value_of("cooldown").unwrap_or("6").parse().unwrap_or(6);
 
-    let mut page: usize = 0;
-    let mut ended = false;
-    while !ended {
-        if !minimal {
-            println!("\x1B[0;34mloading google page {}", page);
-        }
-        let results = google::search("\"gleam.io\"+site:youtube.com&tbs=qdr:h&filter=0", page+1);
-        if results.len() <= 0 {
-            ended = true;
-        } else {
-            for youtube_link in results {
+    for page in 0..4 {
+        if !minimal { println!("\x1B[0;34mloading google page {}", page); }
+        for link in google::search(page) {
+            if !minimal { println!("\x1B[0;34mloading {}", link); }
+            for gleam_link in intermediary::resolve(&link) {
                 if !minimal {
-                    println!("\x1B[0;34mloading {}", youtube_link);
+                    println!("\x1B[1;32mgleam link found: {}", gleam_link);
+                } else {
+                    println!("{}", gleam_link);
                 }
-                for gleam_link in youtube::resolve(&youtube_link) {
-                    if !minimal {
-                        println!("\x1B[1;32mgleam link found: {}", gleam_link);
-                    } else {
-                        println!("{}", gleam_link);
-                    }
-                }
-                if !minimal {
-                    println!("\x1B[0;33msleeping");
-                }
-                thread::sleep(Duration::from_secs(cooldown));
             }
-
-            page += 1;
+            if !minimal { println!("\x1B[0;33msleeping"); }
+            thread::sleep(Duration::from_secs(cooldown));
         }
     }
 }
