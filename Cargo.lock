@@ -114,7 +114,7 @@ dependencies = [
 
 [[package]]
 name = "gleam_finder_client"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clap 2.33.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "gleam_finder 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
