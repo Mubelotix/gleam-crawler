@@ -77,6 +77,26 @@ fn main() {
             progress_bar.print_info("Sleeping", &format!("for {} seconds", cooldown), Color::Yellow, Style::Normal);
             thread::sleep(Duration::from_secs(cooldown));
         }
+    } else {
+        let mut results: Vec<String> = Vec::new();
+        let mut page = 0;
+        loop {
+            let mut new_results = google::search(page);
+            if new_results.len() > 0 {
+                results.append(&mut new_results);
+                page += 1;
+                thread::sleep(Duration::from_secs(cooldown));
+            } else {
+                break;
+            }
+        }
+
+        for link in results {
+            for gleam_link in intermediary::resolve(&link) {
+                println!("{}", gleam_link);
+            }
+            thread::sleep(Duration::from_secs(cooldown));
+        }
     }
     
 }
