@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 gleam_finder = "0.2.1"
 clap = "2.33.0"
+progress_bar = "0.1.0"
