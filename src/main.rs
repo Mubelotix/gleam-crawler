@@ -13,6 +13,24 @@ use serde::{Deserialize, Serialize};
 use gleam_finder::gleam::Giveaway;
 use csv::Reader;
 
+fn fix_str_size(mut input: String, size: usize) -> String {
+    return if input.chars().count() < size {
+        while input.chars().count() < size {
+            input.push(' ');
+        }
+        input
+    } else if input.chars().count() > size {
+        input = input[..size-3].to_string();
+        input.push('.');
+        input.push('.');
+        input.push('.');
+        
+        input
+    } else {
+        input
+    };
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Record {
     url: String,
@@ -136,6 +154,7 @@ fn main() {
 
     let cooldown: u64 = matches.value_of("cooldown").unwrap_or("6").parse().unwrap_or(6);
     env::set_var("MINREQ_TIMEOUT", matches.value_of("timeout").unwrap_or("6"));
+    let mut giveaways = Vec::new();
 
     if !minimal {
         let mut progress_bar = ProgressBar::new(7);
@@ -193,7 +212,9 @@ fn main() {
 
                     progress_bar.set_action("Loading", Color::Blue, Style::Normal);
                     if let Some(giveaway) = Giveaway::fetch(&gleam_link) {
-                        progress_bar.print_info("Found", &format!("{} ({} entries) => {}", giveaway.get_name(), giveaway.get_entry_count(), giveaway.get_url()), Color::LightGreen, Style::Bold);
+                        last_gleam_request = Instant::now();
+                        progress_bar.print_info("Found", &format!("{} {} => {}", fix_str_size(giveaway.get_name().to_string(), 40), fix_str_size(format!("({} entries)", giveaway.get_entry_count()), 18), giveaway.get_url()), Color::LightGreen, Style::Bold);
+                        giveaways.push(giveaway);
                     }
                 } else {
                     progress_bar.print_info("Found", &gleam_link, Color::LightGreen, Style::Bold);
@@ -217,6 +238,8 @@ fn main() {
         }
 
         let mut timeout_check = HashMap::new();
+        let mut last_gleam_request = Instant::now();
+
         for link_idx in 0..results.len() {
             // verifying if the cooldown is respected
             if force_cooldown {
@@ -231,13 +254,29 @@ fn main() {
             
             for gleam_link in intermediary::resolve(results[link_idx].get_url()) {
                 println!("{}", gleam_link);
+                if advanced {
+                    if force_cooldown {
+                        thread::sleep(Duration::from_secs(cooldown));
+                    } else {
+                        let time_since_last_load = Instant::now() - last_gleam_request;
+                        if time_since_last_load < Duration::from_secs(cooldown) {
+                            let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
+                            thread::sleep(time_to_sleep);
+                        }
+                    }
+
+                    if let Some(giveaway) = Giveaway::fetch(&gleam_link) {
+                        last_gleam_request = Instant::now();
+                        giveaways.push(giveaway);
+                    }
+                }
             }
             timeout_check.insert(results[link_idx].get_host(), Instant::now());
         }
     }
     
     if save {
-        let mut records: Vec<Record> = Vec::new();
+        let mut records: Vec<Giveaway> = Vec::new();
 
         if let Ok(mut reader) = Reader::from_path("giveaways.csv") {
             for record in reader.deserialize() {
