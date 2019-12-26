@@ -6,17 +6,15 @@ use std::env;
 use progress_bar::progress_bar::ProgressBar;
 use progress_bar::color::{Color, Style};
 use clap::*;
-use url::{Url, ParseError};
+use url::Url;
 use std::collections::HashMap;
 use std::time::Instant;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Record {
-    city: String,
-    region: String,
-    country: String,
-    population: Option<u64>,
+    url: String,
+    referers: Vec<String>
 }
 
 struct IntermediaryUrl {
@@ -98,6 +96,11 @@ fn main() {
     } else {
         false
     };
+    let force_cooldown: bool = if matches.occurrences_of("force-cooldown") > 0 {
+        true
+    } else {
+        false
+    };
 
     let cooldown: u64 = matches.value_of("cooldown").unwrap_or("6").parse().unwrap_or(6);
     env::set_var("MINREQ_TIMEOUT", matches.value_of("timeout").unwrap_or("6"));
@@ -127,7 +130,10 @@ fn main() {
         progress_bar.set_action("Loading", Color::White, Style::Normal);
         for link_idx in 0..results.len() {
             // verifying if the cooldown is respected
-            if let Some(last_load_time) = timeout_check.get(&results[link_idx].get_host()) {
+            if force_cooldown {
+                progress_bar.print_info("Sleeping", &format!("for {} seconds", cooldown), Color::Yellow, Style::Normal);
+                thread::sleep(Duration::from_secs(cooldown));
+            } else if let Some(last_load_time) = timeout_check.get(&results[link_idx].get_host()) {
                 let time_since_last_load = Instant::now() - *last_load_time;
                 if time_since_last_load < Duration::from_secs(cooldown) {
                     let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
@@ -160,7 +166,9 @@ fn main() {
         let mut timeout_check = HashMap::new();
         for link_idx in 0..results.len() {
             // verifying if the cooldown is respected
-            if let Some(last_load_time) = timeout_check.get(&results[link_idx].get_host()) {
+            if force_cooldown {
+                thread::sleep(Duration::from_secs(cooldown));
+            } else if let Some(last_load_time) = timeout_check.get(&results[link_idx].get_host()) {
                 let time_since_last_load = Instant::now() - *last_load_time;
                 if time_since_last_load < Duration::from_secs(cooldown) {
                     let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
