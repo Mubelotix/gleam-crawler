@@ -5,8 +5,9 @@ authors = ["Mubelotix <unbeliever.in.time@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-gleam_finder = "0.2.1"
+gleam_finder = "0.2.3"
 clap = "2.33.0"
 progress_bar = "0.1.0"
 url = "2.1.0"
 serde = { version = "1.0.104", features = ["derive"] }
+csv = "1.1.1"

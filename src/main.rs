@@ -10,6 +10,8 @@ use url::Url;
 use std::collections::HashMap;
 use std::time::Instant;
 use serde::{Deserialize, Serialize};
+use gleam_finder::gleam::Giveaway;
+use csv::Reader;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Record {
@@ -80,6 +82,18 @@ fn main() {
                 .help("Force to sleep between every request, even between two differents website.")
         )
         .arg(
+            Arg::with_name("save")
+                .long("save")
+                .short("s")
+                .help("Update the file giveaways.csv with new values and delete invalid old giveaways. Enable --advanced option.")
+        )
+        .arg(
+            Arg::with_name("advanced")
+                .long("advanced")
+                .short("a")
+                .help("Scan gleam.io to get informations like number of entries, name and description of the giveaway.")
+        )
+        .arg(
             Arg::with_name("cooldown")
                 .long("cooldown")
                 .takes_value(true)
@@ -109,24 +123,35 @@ fn main() {
     } else {
         false
     };
+    let save: bool = if matches.occurrences_of("save") > 0 {
+        true
+    } else {
+        false
+    };
+    let advanced: bool = if matches.occurrences_of("advanced") > 0 || save {
+        true
+    } else {
+        false
+    };
 
     let cooldown: u64 = matches.value_of("cooldown").unwrap_or("6").parse().unwrap_or(6);
     env::set_var("MINREQ_TIMEOUT", matches.value_of("timeout").unwrap_or("6"));
 
     if !minimal {
-        let mut progress_bar = ProgressBar::new(10);
+        let mut progress_bar = ProgressBar::new(7);
         progress_bar.set_action("Searching", Color::White, Style::Normal);
 
         let mut results = Vec::new();
         let mut page = 0;
         loop {
+            progress_bar.set_action("Loading", Color::Blue, Style::Normal);
             progress_bar.print_info("Getting", &format!("the results page {}", page), Color::Blue, Style::Normal);
             let new_results = google::search(page);
             if new_results.len() > 0 {
                 results.append(&mut IntermediaryUrl::new_from_vec(new_results));
                 page += 1;
                 progress_bar.inc();
-                progress_bar.print_info("Sleeping", &format!("for {} seconds", cooldown), Color::Yellow, Style::Normal);
+                progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
                 thread::sleep(Duration::from_secs(cooldown));
             } else {
                 break;
@@ -135,24 +160,44 @@ fn main() {
 
         let mut progress_bar = ProgressBar::new(results.len());
         let mut timeout_check = HashMap::new();
+        let mut last_gleam_request = Instant::now();
         progress_bar.set_action("Loading", Color::White, Style::Normal);
         for link_idx in 0..results.len() {
             // verifying if the cooldown is respected
             if force_cooldown {
-                progress_bar.print_info("Sleeping", &format!("for {} seconds", cooldown), Color::Yellow, Style::Normal);
+                progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
                 thread::sleep(Duration::from_secs(cooldown));
             } else if let Some(last_load_time) = timeout_check.get(&results[link_idx].get_host()) {
                 let time_since_last_load = Instant::now() - *last_load_time;
                 if time_since_last_load < Duration::from_secs(cooldown) {
                     let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
-                    progress_bar.print_info("Sleeping", &format!("for {} seconds", time_to_sleep.as_secs() + 1), Color::Yellow, Style::Normal);
+                    progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
                     thread::sleep(time_to_sleep);
                 }
             }
             
-            progress_bar.print_info("Loading", results[link_idx].get_url(), Color::Blue, Style::Normal);
+            progress_bar.set_action("Loading", Color::Blue, Style::Normal);
             for gleam_link in intermediary::resolve(results[link_idx].get_url()) {
-                progress_bar.print_info("Found", &gleam_link, Color::LightGreen, Style::Bold);
+                if advanced {
+                    if force_cooldown {
+                        progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
+                        thread::sleep(Duration::from_secs(cooldown));
+                    } else {
+                        let time_since_last_load = Instant::now() - last_gleam_request;
+                        if time_since_last_load < Duration::from_secs(cooldown) {
+                            let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
+                            progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
+                            thread::sleep(time_to_sleep);
+                        }
+                    }
+
+                    progress_bar.set_action("Loading", Color::Blue, Style::Normal);
+                    if let Some(giveaway) = Giveaway::fetch(&gleam_link) {
+                        progress_bar.print_info("Found", &format!("{} ({} entries) => {}", giveaway.get_name(), giveaway.get_entry_count(), giveaway.get_url()), Color::LightGreen, Style::Bold);
+                    }
+                } else {
+                    progress_bar.print_info("Found", &gleam_link, Color::LightGreen, Style::Bold);
+                }
             }
             progress_bar.inc();
             timeout_check.insert(results[link_idx].get_host(), Instant::now());
@@ -191,4 +236,15 @@ fn main() {
         }
     }
     
+    if save {
+        let mut records: Vec<Record> = Vec::new();
+
+        if let Ok(mut reader) = Reader::from_path("giveaways.csv") {
+            for record in reader.deserialize() {
+                if let Ok(record) = record {
+                    records.push(record);
+                }
+            }
+        }
+    }
 }
