@@ -41,12 +41,20 @@ impl IntermediaryUrl {
     }
 
     fn init(&mut self) {
-        let domain = Url::parse(&self.url).unwrap();
-        self.domain = Some(domain);
+        if let Ok(domain) = Url::parse(&self.url) {
+            self.domain = Some(domain)
+        } else {
+            self.domain = None
+        }
     }
 
     fn get_host(&self) -> Host<&str> {
-        self.domain.as_ref().unwrap().host().unwrap()
+        if let Some(domain) = self.domain.as_ref() {
+            if let Some(host) = domain.host() {
+                return host;
+            }
+        }
+        return Host::Domain("undefined");
     }
 
     fn get_url(&self) -> &str {
