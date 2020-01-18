@@ -20,12 +20,18 @@ fn fix_str_size(mut input: String, size: usize) -> String {
         }
         input
     } else if input.chars().count() > size {
-        input = input[..size-3].to_string();
-        input.push('.');
-        input.push('.');
-        input.push('.');
+        let mut new_value = String::new();
+        for character in input.chars() {
+            if new_value.chars().count() < size - 3 {
+                new_value.push(character)
+            }
+        }
+
+        new_value.push('.');
+        new_value.push('.');
+        new_value.push('.');
         
-        input
+        new_value
     } else {
         input
     };
@@ -83,7 +89,6 @@ impl IntermediaryUrl {
 }
 
 fn main() {
-    
     let matches = App::new("Gleam finder")
         .version("1.1")
         .author("Mubelotix <mubelotix@gmail.com>")
