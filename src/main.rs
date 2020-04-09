@@ -11,7 +11,9 @@ use std::collections::HashMap;
 use std::time::Instant;
 use gleam_finder::gleam::Giveaway;
 use serde::{Deserialize, Serialize};
-use csv::{Reader, Writer};
+use serde_json::{to_string, from_str};
+use std::fs::File;
+use std::io::prelude::*;
 
 fn fix_str_size(mut input: String, size: usize) -> String {
     return if input.chars().count() < size {
@@ -109,7 +111,7 @@ fn main() {
             Arg::with_name("save")
                 .long("save")
                 .short("s")
-                .help("Update the file giveaways.csv with new values and delete invalid old giveaways. Enable --advanced option.")
+                .help("Update the file giveaways.json with new values and delete invalid old giveaways. Enable --advanced option.")
         )
         .arg(
             Arg::with_name("advanced")
@@ -158,7 +160,12 @@ fn main() {
     } else {
         false
     };
-    let advanced: bool = if matches.occurrences_of("advanced") > 0 || save {
+    let auto_enter: bool = if matches.occurrences_of("auto-enter") > 0 {
+        true
+    } else {
+        false
+    };
+    let advanced: bool = if matches.occurrences_of("advanced") > 0 || save || auto_enter {
         true
     } else {
         false
@@ -216,7 +223,7 @@ fn main() {
                     }
                 }
                 
-                progress_bar.set_action("Loading", Color::Blue, Style::Normal); 
+                progress_bar.set_action("Loading", Color::Blue, Style::Normal);
                 for gleam_link in intermediary::resolve(results[link_idx].get_url()) {
                     if advanced {
                         if force_cooldown {
@@ -234,7 +241,7 @@ fn main() {
                         progress_bar.set_action("Loading", Color::Blue, Style::Normal);
                         if let Some(giveaway) = Giveaway::fetch(&gleam_link) {
                             last_gleam_request = Instant::now();
-                            progress_bar.print_info("Found", &format!("{} {} => {}", fix_str_size(giveaway.get_name().to_string(), 40), fix_str_size(format!("({} entries)", giveaway.get_entry_count()), 18), giveaway.get_url()), Color::LightGreen, Style::Bold);
+                            progress_bar.print_info("Found", &format!("{} {} => {}", fix_str_size(giveaway.get_name().to_string(), 40), fix_str_size(format!("({:?} entries)", giveaway.get_entry_count()), 18), giveaway.get_url()), Color::LightGreen, Style::Bold);
                             giveaways.insert(gleam_link, giveaway);
                         }
                     } else {
@@ -298,25 +305,35 @@ fn main() {
         }
         
         if save {
-            if let Ok(mut reader) = Reader::from_path("giveaways.csv") {
-                for record in reader.deserialize::<Giveaway>() {
-                    if let Ok(record) = record {
-                        if let None = giveaways.get(record.get_url()) {
-                            giveaways.insert(record.get_url().to_string(), record);
+            match File::open("giveaways.json") {
+                Ok(mut file) => {
+                    let mut content = String::new();
+                    match file.read_to_string(&mut content) {
+                        Ok(_) => match from_str::<Vec<Giveaway>>(&content) {
+                            Ok(saved_giveaways) => for saved_giveaway in saved_giveaways {
+                                if let None = giveaways.get(saved_giveaway.get_gleam_id()) {
+                                    giveaways.insert(saved_giveaway.get_url().to_string(), saved_giveaway);
+                                }
+                            },
+                            Err(e) => eprintln!("Can't deserialize save file: {}", e)
                         }
+                        Err(e) => eprintln!("Can't read save file: {}", e)
                     }
-                }
+                },
+                Err(e) => eprintln!("Can't open save file: {}", e)
             }
-    
-            if let Ok(mut writer) = Writer::from_path("giveaways.csv") {
-                for (_, giveaway) in giveaways {
-                    if let Err(r) = writer.serialize(giveaway) {
-                        eprintln!("can't serialize an entry: {}", r);
+
+            match File::create("giveaways.json") {
+                Ok(mut file) => {
+                    match to_string(&giveaways.values().collect::<Vec<&Giveaway>>()) {
+                        Ok(data) => match file.write(data.as_bytes()) {
+                            Ok(_) => (),
+                            Err(e) => eprintln!("Can't write to file: {}", e)
+                        },
+                        Err(e) => eprintln!("Can't serialize data: {}", e)
                     }
                 }
-                if let Err(r) = writer.flush() {
-                    eprintln!("can't save data: {}", r);
-                }
+                Err(e) => eprintln!("Can't open save file: {}", e)
             }
         }
 
