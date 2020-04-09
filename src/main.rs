@@ -92,7 +92,7 @@ impl IntermediaryUrl {
 
 fn main() {
     let matches = App::new("Gleam finder")
-        .version("1.1")
+        .version("2.2")
         .author("Mubelotix <mubelotix@gmail.com>")
         .about("Search for gleam links on the web.")
         .arg(
@@ -111,13 +111,46 @@ fn main() {
             Arg::with_name("save")
                 .long("save")
                 .short("s")
-                .help("Update the file giveaways.json with new values and delete invalid old giveaways. Enable --advanced option.")
+                .requires("advanced")
+                .help("Update the file giveaways.json with new values and delete invalid old giveaways.")
         )
         .arg(
             Arg::with_name("advanced")
                 .long("advanced")
                 .short("a")
                 .help("Scan gleam.io to get informations like number of entries, name and description of the giveaway.")
+        )
+        .arg(
+            Arg::with_name("meili")
+                .long("meili")
+                .requires("save")
+                .requires("meili-port")
+                .requires("meili-index")
+                .requires("meili-key")
+                .help("Enable auto-update of a MeiliSearch document.")
+        )
+        .arg(
+            Arg::with_name("meili-port")
+                .long("meili-port")
+                .requires("meili")
+                .takes_value(true)
+                .min_values(0)
+                .max_values(65536)
+                .help("Set the port of the MeiliSearch server.")
+        )
+        .arg(
+            Arg::with_name("meili-index")
+                .long("meili-index")
+                .takes_value(true)
+                .requires("meili")
+                .help("Set the name of the MeiliSearch index.")
+        )
+        .arg(
+            Arg::with_name("meili-key")
+                .long("meili-key")
+                .takes_value(true)
+                .requires("meili")
+                .help("The private key of the MeiliSearch database.")
         )
         .arg(
             Arg::with_name("loop")
@@ -132,7 +165,7 @@ fn main() {
                 .min_values(0)
                 .max_values(86400)
                 .default_value("6")
-                .help("Set the waiting time in seconds between two request to the same website.")
+                .help("The in seconds to wait between two requests to the same domain.")
         )
         .arg(
             Arg::with_name("timeout")
@@ -140,7 +173,7 @@ fn main() {
                 .takes_value(true)
                 .min_values(0)
                 .max_values(3600)
-                .default_value("6")
+                .default_value("7")
                 .help("Set the timeout for a request.")
         )
         .get_matches();
@@ -175,10 +208,17 @@ fn main() {
     } else {
         false
     };
+    let meili_update: bool = if matches.occurrences_of("meili") > 0 {
+        true
+    } else {
+        false
+    };
 
     let cooldown: u64 = matches.value_of("cooldown").unwrap_or("6").parse().unwrap_or(6);
     env::set_var("MINREQ_TIMEOUT", matches.value_of("timeout").unwrap_or("6"));
-    
+    let meili_port: u16 = matches.value_of("meili-port").unwrap_or("7700").parse().unwrap_or(7700);
+    let meili_index: &str = matches.value_of("meili-index").unwrap_or("giveaways");
+    let meili_key: &str = matches.value_of("meili-key").unwrap_or("");
 
     loop {
         let mut giveaways = HashMap::new();
@@ -334,6 +374,29 @@ fn main() {
                     }
                 }
                 Err(e) => eprintln!("Can't open save file: {}", e)
+            }
+
+            if meili_update {
+                use std::time::SystemTime;
+                let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+                let running_giveaways: Vec<&Giveaway> = giveaways.values().filter(|g| g.get_end_date() > timestamp).collect();
+                
+                if let Ok(rep) = minreq::delete(format!("http://localhost:{}/indexes/{}/documents", meili_port, meili_index)).with_header("X-Meili-API-Key", meili_key).send() {
+                    if rep.status_code != 202 {
+                        eprintln!("Can't delete documents from MeiliSearch index!");
+                        println!("{}", rep.as_str().unwrap());
+                    }
+                } else {
+                    eprintln!("Can't delete documents from MeiliSearch index!");
+                }
+                if let Ok(rep) = minreq::post(format!("http://localhost:{}/indexes/{}/documents", meili_port, meili_index)).with_header("X-Meili-API-Key", meili_key).with_body(to_string(&running_giveaways).unwrap()).send() {
+                    if rep.status_code != 202 {
+                        eprintln!("Can't post documents to MeiliSearch index!");
+                        println!("{}", rep.as_str().unwrap());
+                    }
+                } else {
+                    eprintln!("Can't post documents to MeiliSearch index!");
+                }
             }
         }
 
