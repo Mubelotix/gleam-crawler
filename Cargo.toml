@@ -1,12 +1,12 @@
 [package]
 name = "gleam_finder_client"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Mubelotix <mubelotix@gmail.com>"]
 edition = "2018"
 publish = false
 
 [dependencies]
-gleam_finder = { path="../gleam_finder", features = ["serde-support"]}
+gleam_finder = { version="0.4.2", features = ["serde-support"]}
 clap = "2.33.0"
 progress_bar = "0.1.3"
 url = "2.1.1"
