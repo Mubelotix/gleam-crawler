@@ -1,7 +1,7 @@
 use url::Host;
 use gleam_finder::*;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::env;
 use progress_bar::progress_bar::ProgressBar;
 use progress_bar::color::{Color, Style};
@@ -92,7 +92,7 @@ impl IntermediaryUrl {
 
 fn main() {
     let matches = App::new("Gleam finder")
-        .version("2.2")
+        .version("2.3")
         .author("Mubelotix <mubelotix@gmail.com>")
         .about("Search for gleam links on the web.")
         .arg(
@@ -176,7 +176,33 @@ fn main() {
                 .default_value("7")
                 .help("Set the timeout for a request.")
         )
+        .subcommand(SubCommand::with_name("count")
+            .about("Display the number of giveaways saved in the file giveaways.json."))
         .get_matches();
+    
+    if let Some(_matches) = matches.subcommand_matches("count") {
+        if let Ok(mut file) = File::open("giveaways.json") {
+            let mut content = String::new();
+            if file.read_to_string(&mut content).is_ok() {
+                let giveaways: Vec<Giveaway> = from_str(&content).unwrap();
+                let total = giveaways.len();
+                
+                let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+                let running_giveaways: Vec<&Giveaway> = giveaways.iter().filter(|g| g.get_end_date() > timestamp).collect();
+                
+                println!("running: \t{}", running_giveaways.len());
+                println!("ended: \t\t{}", total - running_giveaways.len());
+                println!("total: \t\t{}", total);
+                std::process::exit(0);
+            } else {
+                println!("Can't read giveaways.json.");
+                std::process::exit(1);
+            }
+        } else {
+            println!("Can't open giveaways.json.");
+            std::process::exit(1);
+        }
+    }
 
     let minimal: bool = if matches.occurrences_of("minimal") > 0 {
         true
@@ -377,7 +403,6 @@ fn main() {
             }
 
             if meili_update {
-                use std::time::SystemTime;
                 let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
                 let running_giveaways: Vec<&Giveaway> = giveaways.values().filter(|g| g.get_end_date() > timestamp).collect();
                 
