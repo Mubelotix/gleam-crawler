@@ -96,7 +96,7 @@ impl IntermediaryUrl {
 
 fn main() {
     let matches = App::new("Gleam finder")
-        .version("2.3")
+        .version("3.0")
         .author("Mubelotix <mubelotix@gmail.com>")
         .about("Search for gleam links on the web.")
         .arg(
