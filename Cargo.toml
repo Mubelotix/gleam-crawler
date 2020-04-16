@@ -4,6 +4,7 @@ version = "0.2.3"
 authors = ["Mubelotix <mubelotix@gmail.com>"]
 edition = "2018"
 publish = false
+license = "AGPL-3.0-only"
 
 [dependencies]
 gleam_finder = { version="0.4.2", features = ["serde-support"]}
