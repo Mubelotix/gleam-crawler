@@ -96,9 +96,9 @@ impl IntermediaryUrl {
 
 fn main() {
     let matches = App::new("Gleam finder")
-        .version("3.0")
+        .version("3.1")
         .author("Mubelotix <mubelotix@gmail.com>")
-        .about("Search for gleam links on the web.")
+        .about("Search for gleam.io links on the web.")
         .arg(
             Arg::with_name("minimal")
                 .long("minimal")
@@ -283,7 +283,7 @@ fn main() {
                         progress_bar.set_action("Loading", Color::Blue, Style::Normal);
                         if let Ok(giveaway) = Giveaway::fetch(&gleam_link) {
                             last_gleam_request = Instant::now();
-                            progress_bar.print_info("Found", &format!("{} {} => {}", fix_str_size(giveaway.name.clone(), 40), fix_str_size(format!("({:?} entries)", giveaway.entry_count), 18), giveaway.get_url()), Color::LightGreen, Style::Bold);
+                            progress_bar.print_info("Found", &format!("{}, {:>7} entries, {}", giveaway.get_url(), if let Some(entry_count) = giveaway.entry_count { entry_count.to_string() } else {String::from("unknow")}, giveaway.name), Color::LightGreen, Style::Bold);
                             giveaways.insert(gleam_link, giveaway);
                         }
                     } else {

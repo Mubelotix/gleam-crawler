@@ -1,6 +1,6 @@
 [package]
 name = "gleam_finder_client"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Mubelotix <mubelotix@gmail.com>"]
 edition = "2018"
 publish = false
