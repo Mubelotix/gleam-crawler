@@ -215,6 +215,27 @@ async fn main() {
     let meili_index: &str = matches.value_of("meili-index").unwrap_or("giveaways");
     let meili_key: &str = matches.value_of("meili-key").unwrap_or("");
 
+    if meili_update {
+        use meilisearch_sdk::client::Client;
+
+        let client = Client::new(meili_host, meili_key);
+        let index = match client.get_or_create(meili_index).await {
+            Ok(index) => index,
+            Err(e) => {
+                eprintln!("Meilisearch error while initializing the index: {:?}", e);
+                return;
+            },
+        };
+        if let Err(e) = index.set_searchable_attributes(&["name", "description"]).await {
+            eprintln!("Meilisearch error while setting searchable attributes: {:?}", e);
+            return;
+        };
+        if let Err(e) = index.set_stop_words(&["the", "to", "of", "a", "in", "it", "on", "at", "an"]).await {
+            eprintln!("Meilisearch error while setting stop words: {:?}", e);
+            return;
+        };
+    }
+
     loop {
         let mut giveaways: HashMap<String, Giveaway> = HashMap::new();
         let start = Instant::now();
