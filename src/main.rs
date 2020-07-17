@@ -91,7 +91,7 @@ impl From<gleam_finder::gleam::Giveaway> for Giveaway {
 #[tokio::main]
 async fn main() {
     let matches = App::new("Gleam finder")
-        .version("3.1")
+        .version("3.2")
         .author("Mubelotix <mubelotix@gmail.com>")
         .about("Search for gleam.io links on the web.")
         .arg(
@@ -245,8 +245,7 @@ async fn main() {
 
         let mut progress_bar = ProgressBar::new(7);
         progress_bar.set_action("Searching", Color::White, Style::Normal);
-
-        /*let mut results = Vec::new();
+        let mut results = Vec::new();
         let mut page = 0;
         loop {
             progress_bar.set_action("Loading", Color::Blue, Style::Normal);
@@ -262,6 +261,10 @@ async fn main() {
                 break;
             }
         }
+        progress_bar.set_action("Finished", Color::Green, Style::Bold);
+        progress_bar.print_info("Finished", &format!("{} results found", results.len()), Color::Green, Style::Bold);
+        progress_bar.finalize();
+        println!();
 
         let mut progress_bar = ProgressBar::new(results.len());
         let mut timeout_check = HashMap::new();
@@ -282,7 +285,11 @@ async fn main() {
             }
             
             progress_bar.set_action("Loading", Color::Blue, Style::Normal);
-            for gleam_link in intermediary::resolve(results[link_idx].get_url()).unwrap_or_default() {
+            let giveaway_urls = intermediary::resolve(results[link_idx].get_url()).unwrap_or_default();
+            if giveaway_urls.is_empty() {
+                progress_bar.print_info("Useless", &format!("page loaded: {}", results[link_idx].get_url()), Color::Yellow, Style::Normal);
+            }
+            for gleam_link in giveaway_urls {
                 if advanced {
                     if force_cooldown {
                         progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
@@ -309,7 +316,11 @@ async fn main() {
             
             progress_bar.inc();
             timeout_check.insert(results[link_idx].get_host(), Instant::now());
-        }*/
+        }
+        progress_bar.set_action("Finished", Color::Green, Style::Bold);
+        progress_bar.print_info("Finished", &format!("{} giveaways found", giveaways.len()), Color::Green, Style::Bold);
+        progress_bar.finalize();
+        println!();
         
         if save {
             match File::open("giveaways.json") {
@@ -356,8 +367,10 @@ async fn main() {
                     progress_bar.inc();
                     thread::sleep(Duration::from_secs(cooldown));
                 }
+                progress_bar.print_info("Finished", &format!("{} giveaways updated", len), Color::Green, Style::Bold);
                 progress_bar.set_action("Finished", Color::Green, Style::Bold);
                 progress_bar.finalize();
+                println!();
             }
 
             match File::create("giveaways.json") {
@@ -404,7 +417,7 @@ async fn main() {
 
         if loop_enabled {
             let time_elapsed = Instant::now().duration_since(start);
-            let time_to_sleep = Duration::from_secs(3600) - time_elapsed;
+            let time_to_sleep = Duration::from_secs(3540) - time_elapsed;
             thread::sleep(time_to_sleep);
         } else {
             break;
