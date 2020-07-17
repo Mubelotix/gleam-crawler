@@ -9,11 +9,11 @@ use clap::*;
 use url::Url;
 use std::collections::HashMap;
 use std::time::Instant;
-use gleam_finder::gleam::Giveaway;
 use serde::{Deserialize, Serialize};
 use serde_json::{to_string, from_str};
 use std::fs::File;
 use std::io::prelude::*;
+use tokio::prelude::*;
 
 fn fix_str_size(mut input: String, size: usize) -> String {
     match input.chars().count() {
@@ -94,7 +94,30 @@ impl IntermediaryUrl {
     }
 }
 
-fn main() {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Giveaway {
+    #[serde(flatten)]
+    g: gleam_finder::gleam::Giveaway
+}
+
+impl meilisearch_sdk::document::Document for Giveaway {
+    type UIDType = String;
+
+    fn get_uid(&self) -> &String {
+        &self.g.gleam_id
+    }
+}
+
+impl From<gleam_finder::gleam::Giveaway> for Giveaway {
+    fn from(g: gleam_finder::gleam::Giveaway) -> Giveaway {
+        Giveaway {
+            g
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
     let matches = App::new("Gleam finder")
         .version("3.1")
         .author("Mubelotix <mubelotix@gmail.com>")
@@ -128,19 +151,17 @@ fn main() {
             Arg::with_name("meili")
                 .long("meili")
                 .requires("save")
-                .requires("meili-port")
+                .requires("meili-host")
                 .requires("meili-index")
                 .requires("meili-key")
                 .help("Enable auto-update of a MeiliSearch document.")
         )
         .arg(
-            Arg::with_name("meili-port")
-                .long("meili-port")
+            Arg::with_name("meili-host")
+                .long("meili-host")
                 .requires("meili")
                 .takes_value(true)
-                .min_values(0)
-                .max_values(65536)
-                .help("Set the port of the MeiliSearch server.")
+                .help("Set the host of the MeiliSearch server. Default: http://localhost:7700")
         )
         .arg(
             Arg::with_name("meili-index")
@@ -192,7 +213,7 @@ fn main() {
                 let total = giveaways.len();
                 
                 let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-                let running_giveaways: Vec<&Giveaway> = giveaways.iter().filter(|g| g.end_date > timestamp).collect();
+                let running_giveaways: Vec<&Giveaway> = giveaways.iter().filter(|g| g.g.end_date > timestamp).collect();
                 
                 println!("running: \t{}", running_giveaways.len());
                 println!("ended: \t\t{}", total - running_giveaways.len());
@@ -218,12 +239,12 @@ fn main() {
 
     let cooldown: u64 = matches.value_of("cooldown").unwrap_or("6").parse().unwrap_or(6);
     env::set_var("MINREQ_TIMEOUT", matches.value_of("timeout").unwrap_or("6"));
-    let meili_port: u16 = matches.value_of("meili-port").unwrap_or("7700").parse().unwrap_or(7700);
+    let meili_host: &str = matches.value_of("meili-host").unwrap_or("http://localhost:7700");
     let meili_index: &str = matches.value_of("meili-index").unwrap_or("giveaways");
     let meili_key: &str = matches.value_of("meili-key").unwrap_or("");
 
     loop {
-        let mut giveaways = HashMap::new();
+        let mut giveaways: HashMap<String, Giveaway> = HashMap::new();
         let start = Instant::now();
 
         if !minimal {
@@ -281,10 +302,10 @@ fn main() {
                         }
     
                         progress_bar.set_action("Loading", Color::Blue, Style::Normal);
-                        if let Ok(giveaway) = Giveaway::fetch(&gleam_link) {
+                        if let Ok(giveaway) = gleam_finder::gleam::Giveaway::fetch(&gleam_link) {
                             last_gleam_request = Instant::now();
-                            progress_bar.print_info("Found", &format!("{}, {:>7} entries, {}", giveaway.get_url(), if let Some(entry_count) = giveaway.entry_count { entry_count.to_string() } else {String::from("unknow")}, giveaway.name), Color::LightGreen, Style::Bold);
-                            giveaways.insert(gleam_link, giveaway);
+                            progress_bar.print_info("Found", &format!("{} {:>8} entries - {}", giveaway.get_url(), if let Some(entry_count) = giveaway.entry_count { entry_count.to_string() } else {String::from("unknow")}, giveaway.name), Color::LightGreen, Style::Bold);
+                            giveaways.insert(gleam_link, giveaway.into());
                         }
                     } else {
                         progress_bar.print_info("Found", &gleam_link, Color::LightGreen, Style::Bold);
@@ -336,9 +357,9 @@ fn main() {
                             }
                         }
     
-                        if let Ok(giveaway) = Giveaway::fetch(&gleam_link) {
+                        if let Ok(giveaway) = gleam_finder::gleam::Giveaway::fetch(&gleam_link) {
                             last_gleam_request = Instant::now();
-                            giveaways.insert(gleam_link, giveaway);
+                            giveaways.insert(gleam_link, giveaway.into());
                         }
                     }
                 }
@@ -353,8 +374,8 @@ fn main() {
                     match file.read_to_string(&mut content) {
                         Ok(_) => match from_str::<Vec<Giveaway>>(&content) {
                             Ok(saved_giveaways) => for saved_giveaway in saved_giveaways {
-                                if giveaways.get(&saved_giveaway.gleam_id).is_none() {
-                                    giveaways.insert(saved_giveaway.get_url().to_string(), saved_giveaway);
+                                if giveaways.get(&saved_giveaway.g.gleam_id).is_none() {
+                                    giveaways.insert(saved_giveaway.g.get_url().to_string(), saved_giveaway);
                                 }
                             },
                             Err(e) => eprintln!("Can't deserialize save file: {}", e)
@@ -380,24 +401,29 @@ fn main() {
 
             if meili_update {
                 let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-                let running_giveaways: Vec<&Giveaway> = giveaways.values().filter(|g| g.end_date > timestamp).collect();
+                let giveaways = giveaways.drain().map(|(_i, g)| g).filter(|g| g.g.end_date > timestamp).collect::<Vec<Giveaway>>();
                 
-                if let Ok(rep) = minreq::delete(format!("http://localhost:{}/indexes/{}/documents", meili_port, meili_index)).with_header("X-Meili-API-Key", meili_key).send() {
-                    if rep.status_code != 202 {
-                        eprintln!("Can't delete documents from MeiliSearch index!");
-                        println!("{}", rep.as_str().unwrap());
-                    }
-                } else {
-                    eprintln!("Can't delete documents from MeiliSearch index!");
+                use meilisearch_sdk::client::Client;
+                async fn update_database(meili_host: &str, meili_key: &str, meili_index: &str, running_giveaways: &Vec<Giveaway>) {
+                    let client = Client::new(meili_host, meili_key);
+                    let index = match client.get_or_create(meili_index).await {
+                        Ok(index) => index,
+                        Err(e) => {
+                            eprintln!("Meilisearch error while initializing the index: {:?}", e);
+                            return;
+                        },
+                    };
+                    if let Err(e) = index.delete_all_documents().await {
+                        eprintln!("Meilisearch error while deleting documents: {:?}", e);
+                        return;
+                    };
+                    if let Err(e) = index.add_documents(running_giveaways, Some("gleam_id")).await {
+                        eprintln!("Meilisearch error while adding documents: {:?}", e);
+                        return;
+                    };
                 }
-                if let Ok(rep) = minreq::post(format!("http://localhost:{}/indexes/{}/documents", meili_port, meili_index)).with_header("X-Meili-API-Key", meili_key).with_body(to_string(&running_giveaways).unwrap()).send() {
-                    if rep.status_code != 202 {
-                        eprintln!("Can't post documents to MeiliSearch index!");
-                        println!("{}", rep.as_str().unwrap());
-                    }
-                } else {
-                    eprintln!("Can't post documents to MeiliSearch index!");
-                }
+                
+                update_database(meili_host, meili_key, meili_index, &giveaways).await
             }
         }
 
