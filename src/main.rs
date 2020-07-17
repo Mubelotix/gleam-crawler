@@ -95,12 +95,6 @@ async fn main() {
         .author("Mubelotix <mubelotix@gmail.com>")
         .about("Search for gleam.io links on the web.")
         .arg(
-            Arg::with_name("minimal")
-                .long("minimal")
-                .short("m")
-                .help("Enables simplified mode: only results urls are printed; no progress bar and log informations")
-        )
-        .arg(
             Arg::with_name("force-cooldown")
                 .long("force-cooldown")
                 .short("f")
@@ -201,7 +195,6 @@ async fn main() {
         }
     }
 
-    let minimal: bool = matches.occurrences_of("minimal") > 0;
     let force_cooldown: bool = matches.occurrences_of("force-cooldown") > 0;
     let save: bool = matches.occurrences_of("save") > 0;
     let auto_enter: bool = matches.occurrences_of("auto-enter") > 0;
@@ -240,124 +233,72 @@ async fn main() {
         let mut giveaways: HashMap<String, Giveaway> = HashMap::new();
         let start = Instant::now();
 
-        if !minimal {
-            let mut progress_bar = ProgressBar::new(7);
-            progress_bar.set_action("Searching", Color::White, Style::Normal);
-    
-            let mut results = Vec::new();
-            let mut page = 0;
-            loop {
-                progress_bar.set_action("Loading", Color::Blue, Style::Normal);
-                progress_bar.print_info("Getting", &format!("the results page {}", page), Color::Blue, Style::Normal);
-                let new_results = google::search(page).unwrap_or_default();
-                if !new_results.is_empty() {
-                    results.append(&mut IntermediaryUrl::new_from_vec(new_results));
-                    page += 1;
-                    progress_bar.inc();
-                    progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
-                    thread::sleep(Duration::from_secs(cooldown));
-                } else {
-                    break;
-                }
-            }
-    
-            let mut progress_bar = ProgressBar::new(results.len());
-            let mut timeout_check = HashMap::new();
-            let mut last_gleam_request = Instant::now();
-            progress_bar.set_action("Loading", Color::White, Style::Normal);
-            for link_idx in 0..results.len() {
-                // verifying if the cooldown is respected
-                if force_cooldown {
-                    progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal); 
-                    thread::sleep(Duration::from_secs(cooldown));
-                } else if let Some(last_load_time) = timeout_check.get(&results[link_idx].get_host()) {
-                    let time_since_last_load = Instant::now() - *last_load_time;
-                    if time_since_last_load < Duration::from_secs(cooldown) {
-                        let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
-                        progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal); 
-                        thread::sleep(time_to_sleep);
-                    }
-                }
-                
-                progress_bar.set_action("Loading", Color::Blue, Style::Normal);
-                for gleam_link in intermediary::resolve(results[link_idx].get_url()).unwrap_or_default() {
-                    if advanced {
-                        if force_cooldown {
-                            progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
-                            thread::sleep(Duration::from_secs(cooldown));
-                        } else {
-                            let time_since_last_load = Instant::now() - last_gleam_request;
-                            if time_since_last_load < Duration::from_secs(cooldown) {
-                                let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
-                                progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
-                                thread::sleep(time_to_sleep);
-                            }
-                        }
-    
-                        progress_bar.set_action("Loading", Color::Blue, Style::Normal);
-                        if let Ok(giveaway) = gleam_finder::gleam::Giveaway::fetch(&gleam_link) {
-                            last_gleam_request = Instant::now();
-                            progress_bar.print_info("Found", &format!("{} {:>8} entries - {}", giveaway.get_url(), if let Some(entry_count) = giveaway.entry_count { entry_count.to_string() } else {String::from("unknow")}, giveaway.name), Color::LightGreen, Style::Bold);
-                            giveaways.insert(gleam_link, giveaway.into());
-                        }
-                    } else {
-                        progress_bar.print_info("Found", &gleam_link, Color::LightGreen, Style::Bold);
-                    }
-                }
-                
+        let mut progress_bar = ProgressBar::new(7);
+        progress_bar.set_action("Searching", Color::White, Style::Normal);
+
+        let mut results = Vec::new();
+        let mut page = 0;
+        loop {
+            progress_bar.set_action("Loading", Color::Blue, Style::Normal);
+            progress_bar.print_info("Getting", &format!("the results page {}", page), Color::Blue, Style::Normal);
+            let new_results = google::search(page).unwrap_or_default();
+            if !new_results.is_empty() {
+                results.append(&mut IntermediaryUrl::new_from_vec(new_results));
+                page += 1;
                 progress_bar.inc();
-                timeout_check.insert(results[link_idx].get_host(), Instant::now());
+                progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
+                thread::sleep(Duration::from_secs(cooldown));
+            } else {
+                break;
             }
-        } else {
-            let mut results = Vec::new();
-            let mut page = 0;
-            loop {
-                let new_results = google::search(page).unwrap_or_default();
-                if !new_results.is_empty() {
-                    results.append(&mut IntermediaryUrl::new_from_vec(new_results));
-                    page += 1;
-                    thread::sleep(Duration::from_secs(cooldown));
+        }
+
+        let mut progress_bar = ProgressBar::new(results.len());
+        let mut timeout_check = HashMap::new();
+        let mut last_gleam_request = Instant::now();
+        progress_bar.set_action("Loading", Color::White, Style::Normal);
+        for link_idx in 0..results.len() {
+            // verifying if the cooldown is respected
+            if force_cooldown {
+                progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal); 
+                thread::sleep(Duration::from_secs(cooldown));
+            } else if let Some(last_load_time) = timeout_check.get(&results[link_idx].get_host()) {
+                let time_since_last_load = Instant::now() - *last_load_time;
+                if time_since_last_load < Duration::from_secs(cooldown) {
+                    let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
+                    progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal); 
+                    thread::sleep(time_to_sleep);
+                }
+            }
+            
+            progress_bar.set_action("Loading", Color::Blue, Style::Normal);
+            for gleam_link in intermediary::resolve(results[link_idx].get_url()).unwrap_or_default() {
+                if advanced {
+                    if force_cooldown {
+                        progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
+                        thread::sleep(Duration::from_secs(cooldown));
+                    } else {
+                        let time_since_last_load = Instant::now() - last_gleam_request;
+                        if time_since_last_load < Duration::from_secs(cooldown) {
+                            let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
+                            progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
+                            thread::sleep(time_to_sleep);
+                        }
+                    }
+
+                    progress_bar.set_action("Loading", Color::Blue, Style::Normal);
+                    if let Ok(giveaway) = gleam_finder::gleam::Giveaway::fetch(&gleam_link) {
+                        last_gleam_request = Instant::now();
+                        progress_bar.print_info("Found", &format!("{} {:>8} entries - {}", giveaway.get_url(), if let Some(entry_count) = giveaway.entry_count { entry_count.to_string() } else {String::from("unknow")}, giveaway.name), Color::LightGreen, Style::Bold);
+                        giveaways.insert(gleam_link, giveaway.into());
+                    }
                 } else {
-                    break;
+                    progress_bar.print_info("Found", &gleam_link, Color::LightGreen, Style::Bold);
                 }
             }
-    
-            let mut timeout_check = HashMap::new();
-            let mut last_gleam_request = Instant::now();
-    
-            for link_idx in 0..results.len() {
-                // verifying if the cooldown is respected
-                if force_cooldown {
-                    thread::sleep(Duration::from_secs(cooldown));
-                } else if let Some(last_load_time) = timeout_check.get(&results[link_idx].get_host()) {
-                    let time_since_last_load = Instant::now() - *last_load_time;
-                    if time_since_last_load < Duration::from_secs(cooldown) {
-                        let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
-                        thread::sleep(time_to_sleep);
-                    }
-                }
-                
-                for gleam_link in intermediary::resolve(results[link_idx].get_url()).unwrap_or_default() {
-                    println!("{}", gleam_link);
-                    if advanced {
-                        if force_cooldown {
-                            thread::sleep(Duration::from_secs(cooldown));
-                        } else {
-                            let time_since_last_load = Instant::now() - last_gleam_request;
-                            if time_since_last_load < Duration::from_secs(cooldown) {
-                                let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
-                                thread::sleep(time_to_sleep);
-                            }
-                        }
-    
-                        if let Ok(giveaway) = gleam_finder::gleam::Giveaway::fetch(&gleam_link) {
-                            last_gleam_request = Instant::now();
-                            giveaways.insert(gleam_link, giveaway.into());
-                        }
-                    }
-                }
-                timeout_check.insert(results[link_idx].get_host(), Instant::now());
-            }
+            
+            progress_bar.inc();
+            timeout_check.insert(results[link_idx].get_host(), Instant::now());
         }
         
         if save {
