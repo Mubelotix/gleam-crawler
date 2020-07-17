@@ -13,35 +13,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{to_string, from_str};
 use std::fs::File;
 use std::io::prelude::*;
-use tokio::prelude::*;
-
-fn fix_str_size(mut input: String, size: usize) -> String {
-    match input.chars().count() {
-        count if count < size => {
-            while input.chars().count() < size {
-                input.push(' ');
-            }
-            input
-        },
-        count if count > size => {
-            let mut new_value = String::new();
-            for character in input.chars() {
-                if new_value.chars().count() < size - 3 {
-                    new_value.push(character)
-                }
-            }
-
-            new_value.push('.');
-            new_value.push('.');
-            new_value.push('.');
-            
-            new_value
-        },
-        _ => {
-            input
-        }
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Record {
@@ -116,6 +87,7 @@ impl From<gleam_finder::gleam::Giveaway> for Giveaway {
     }
 }
 
+#[allow(clippy::needless_range_loop)]
 #[tokio::main]
 async fn main() {
     let matches = App::new("Gleam finder")
@@ -404,6 +376,7 @@ async fn main() {
                 let giveaways = giveaways.drain().map(|(_i, g)| g).filter(|g| g.g.end_date > timestamp).collect::<Vec<Giveaway>>();
                 
                 use meilisearch_sdk::client::Client;
+                #[allow(clippy::ptr_arg)]
                 async fn update_database(meili_host: &str, meili_key: &str, meili_index: &str, running_giveaways: &Vec<Giveaway>) {
                     let client = Client::new(meili_host, meili_key);
                     let index = match client.get_or_create(meili_index).await {
