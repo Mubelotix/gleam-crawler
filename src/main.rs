@@ -159,6 +159,15 @@ async fn main() {
                 .help("The in seconds to wait between two requests to the same domain.")
         )
         .arg(
+            Arg::with_name("update")
+                .long("update")
+                .takes_value(true)
+                .min_values(0)
+                .requires("save")
+                .default_value("0")
+                .help("The number of oldest giveaways that will be updated each hour.")
+        )
+        .arg(
             Arg::with_name("timeout")
                 .long("timeout")
                 .takes_value(true)
@@ -203,6 +212,7 @@ async fn main() {
     let meili_update: bool = matches.occurrences_of("meili") > 0;
 
     let cooldown: u64 = matches.value_of("cooldown").unwrap_or("6").parse().unwrap_or(6);
+    let update: usize = matches.value_of("update").unwrap_or("0").parse().unwrap_or(0);
     env::set_var("MINREQ_TIMEOUT", matches.value_of("timeout").unwrap_or("6"));
     let meili_host: &str = matches.value_of("meili-host").unwrap_or("http://localhost:7700");
     let meili_index: &str = matches.value_of("meili-index").unwrap_or("giveaways");
@@ -236,7 +246,7 @@ async fn main() {
         let mut progress_bar = ProgressBar::new(7);
         progress_bar.set_action("Searching", Color::White, Style::Normal);
 
-        let mut results = Vec::new();
+        /*let mut results = Vec::new();
         let mut page = 0;
         loop {
             progress_bar.set_action("Loading", Color::Blue, Style::Normal);
@@ -299,7 +309,7 @@ async fn main() {
             
             progress_bar.inc();
             timeout_check.insert(results[link_idx].get_host(), Instant::now());
-        }
+        }*/
         
         if save {
             match File::open("giveaways.json") {
@@ -320,9 +330,39 @@ async fn main() {
                 Err(e) => eprintln!("Can't open save file: {}", e)
             }
 
+            let mut giveaways = giveaways.drain().map(|(_i, g)| g).collect::<Vec<Giveaway>>();
+            if update > 0 {
+                giveaways.sort_by_key(|g| g.g.update_date);
+            
+                let mut len = 0;
+                let mut indexes_to_update: Vec<usize> = giveaways.iter().enumerate().filter(|(_idx, g)| g.g.update_date < g.g.end_date).map(|(idx, _g)| idx).filter(|_idx| if len < update {len += 1; true} else {false}).collect();
+                indexes_to_update.reverse();
+                
+                let mut progress_bar = ProgressBar::new(len);
+                for idx in indexes_to_update {
+                    progress_bar.set_action("Updating", Color::Blue, Style::Normal);
+                    match gleam_finder::gleam::Giveaway::fetch(&giveaways[idx].g.get_url()) {
+                        Ok(updated) => giveaways[idx].g = updated,
+                        Err(gleam_finder::Error::InvalidResponse) => {
+                            progress_bar.print_info("Invalid", &format!("giveaway {} (giveaway has been removed)", giveaways[idx].g.get_url()), Color::Red, Style::Bold);
+                            giveaways.remove(idx);
+                        }
+                        Err(gleam_finder::Error::Timeout) => {
+                            progress_bar.print_info("Timeout", "Failed to load giveaway (giveaway has not been updated)", Color::Red, Style::Bold);
+                            thread::sleep(Duration::from_secs(10));
+                        }
+                    }
+                    progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
+                    progress_bar.inc();
+                    thread::sleep(Duration::from_secs(cooldown));
+                }
+                progress_bar.set_action("Finished", Color::Green, Style::Bold);
+                progress_bar.finalize();
+            }
+
             match File::create("giveaways.json") {
                 Ok(mut file) => {
-                    match to_string(&giveaways.values().collect::<Vec<&Giveaway>>()) {
+                    match to_string(&giveaways) {
                         Ok(data) => match file.write(data.as_bytes()) {
                             Ok(_) => (),
                             Err(e) => eprintln!("Can't write to file: {}", e)
@@ -335,7 +375,7 @@ async fn main() {
 
             if meili_update {
                 let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-                let giveaways = giveaways.drain().map(|(_i, g)| g).filter(|g| g.g.end_date > timestamp).collect::<Vec<Giveaway>>();
+                giveaways.retain(|g| g.g.end_date > timestamp);
                 
                 use meilisearch_sdk::client::Client;
                 #[allow(clippy::ptr_arg)]
