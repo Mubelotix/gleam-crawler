@@ -1,0 +1,9 @@
+timeout = 7
+update = 0
+cooldown = 6
+database_file = "new_giveaways.json"
+
+[meilisearch]
+host = "http://localhost:7700"
+index = "test"
+key = ""

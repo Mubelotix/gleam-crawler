@@ -1,7 +1,4 @@
-use std::env;
 use clap::*;
-use serde::{Deserialize, Serialize};
-mod error;
 mod stats;
 mod crawler;
 mod config;

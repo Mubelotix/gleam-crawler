@@ -83,22 +83,28 @@ pub fn fetch(url: &str) -> Result<SearchResult, Error> {
 #[cfg(test)]
 mod tests {
     use std::{thread::sleep, time::Duration};
-
     use super::*;
+    
     #[test]
     fn test_giveaway_struct() {
         let giveaway =
             fetch("https://gleam.io/29CPn/-2-alok-gveaway-and-12000-diamonds-")
                 .unwrap();
         println!("{:?}", giveaway);
-        sleep(Duration::from_secs(5));
+            sleep(Duration::from_secs(15));
+        let giveaway =
+            fetch("https://gleam.io/SB3C7/-")
+               .unwrap();
+        println!("{:?}", giveaway);
+        sleep(Duration::from_secs(15));
         let giveaway = fetch("https://gleam.io/8nTqy/amd-5700xt-gpu").unwrap();
         println!("{:?}", giveaway);
-        sleep(Duration::from_secs(5));
+        sleep(Duration::from_secs(15));
         let giveaway =
             fetch("https://gleam.io/ff3QT/win-an-ipad-pro-with-canstar").unwrap();
         println!("{:?}", giveaway);
     }
+
     #[test]
     fn get_gleam_urls() {
         assert_eq!(
