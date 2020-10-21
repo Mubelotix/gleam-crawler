@@ -1,10 +1,12 @@
 use std::env;
 use clap::*;
 use serde::{Deserialize, Serialize};
-mod crawler_lib;
+mod error;
 mod stats;
 mod crawler;
 mod config;
+mod google;
+mod gleam;
 use config::*;
 use stats::*;
 use crawler::launch;

@@ -1,4 +1,4 @@
-use crate::{config::*, crawler_lib::*};
+use crate::{config::*, google, gleam};
 use std::{collections::HashMap, time::{Instant, Duration, SystemTime}, thread::sleep};
 use progress_bar::{color::*, progress_bar::ProgressBar};
 use serde::{Serialize, Deserialize};
@@ -102,7 +102,7 @@ pub async fn launch(config: Config, fast: bool) {
             }
             
             progress_bar.set_action("Loading", Color::Blue, Style::Normal);
-            let giveaway_urls = intermediary::resolve(results[link_idx].get_url()).unwrap_or_default();
+            let giveaway_urls = resolve(results[link_idx].get_url()).unwrap_or_default();
             if giveaway_urls.is_empty() {
                 progress_bar.print_info("Useless", &format!("page loaded: {}", results[link_idx].get_url()), Color::Yellow, Style::Normal);
             }
@@ -116,7 +116,7 @@ pub async fn launch(config: Config, fast: bool) {
                     }
 
                     progress_bar.set_action("Loading", Color::Blue, Style::Normal);
-                    if let Ok(giveaway) = crate::crawler_lib::gleam::fetch(&gleam_link) {
+                    if let Ok(giveaway) = gleam::fetch(&gleam_link) {
                         last_gleam_request = Instant::now();
                         progress_bar.print_info("Found", &format!("{} {:>8} entries - {}", giveaway.get_url(), if let Some(entry_count) = giveaway.entry_count { entry_count.to_string() } else {String::from("unknow")}, giveaway.get_name()), Color::LightGreen, Style::Bold);
                         giveaways.insert(gleam_link, giveaway);
@@ -167,16 +167,17 @@ pub async fn launch(config: Config, fast: bool) {
                 let mut progress_bar = ProgressBar::new(len);
                 for idx in indexes_to_update {
                     progress_bar.set_action("Updating", Color::Blue, Style::Normal);
-                    match crate::crawler_lib::gleam::fetch(&giveaways[idx].get_url()) {
+                    match gleam::fetch(&giveaways[idx].get_url()) {
                         Ok(updated) => giveaways[idx] = updated,
-                        Err(crate::crawler_lib::Error::InvalidResponse) => {
-                            progress_bar.print_info("Invalid", &format!("giveaway {} (giveaway has been removed)", giveaways[idx].get_url()), Color::Red, Style::Bold);
-                            giveaways.remove(idx);
+                        Err(gleam::Error::ParseError(e)) => {
+                            progress_bar.print_info("Invalid", &format!("giveaway {} (giveaway should be removed)", giveaways[idx].get_url()), Color::Red, Style::Bold);
+                            //giveaways.remove(idx);
                         }
-                        Err(crate::crawler_lib::Error::Timeout) => {
+                        Err(gleam::Error::NetworkError(_e)) => {
                             progress_bar.print_info("Timeout", "Failed to load giveaway (giveaway has not been updated)", Color::Red, Style::Bold);
                             sleep(Duration::from_secs(10));
                         }
+                        Err(e) => unreachable!(),
                     }
                     progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
                     progress_bar.inc();
@@ -226,7 +227,7 @@ pub async fn launch(config: Config, fast: bool) {
                     };
                 }
                 
-                update_database(&config.meilisearch.host, &config.meilisearch.key, &config.meilisearch.index, &giveaways).await
+                update_database(&config.meilisearch.host, &config.meilisearch.key, &config.meilisearch.index, &giveaways).await;
             }
         }
 
@@ -237,5 +238,82 @@ pub async fn launch(config: Config, fast: bool) {
         } else {
             break;
         }
+    }
+}
+
+/// put an url+noise, get url (without http://domain.something/)
+fn get_url(url: &str) -> &str {
+    let mut i = 0;
+    for c in url.chars() {
+        if !c.is_ascii_alphanumeric() && c != '-' && c != '/' && c != '_' {
+            break;
+        }
+        i += 1;
+    }
+    &url[..i]
+}
+
+pub fn resolve(url: &str) -> Result<Vec<String>, minreq::Error> {
+    use string_tools::*;
+
+    let response = match minreq::get(url)
+        .with_header("Accept", "text/html,text/plain")
+        .with_header(
+            "User-Agent",
+            "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:78.0) Gecko/20100101 Firefox/78.0",
+        )
+        .with_header(
+            "Host",
+            get_all_between(url, "://", "/"),
+        )
+        .send()
+    {
+        Ok(response) => response,
+        Err(e) => {
+            eprintln!("Failed to load {}: {}", url, e);
+            return Err(e);
+        },
+    };
+
+    let mut body = match response.as_str() {
+        Ok(body) => body,
+        Err(e) => {
+            eprintln!("Failed to load {}: {}", url, e);
+            return Err(e);
+        },
+    };
+
+    let mut rep = Vec::new();
+    while get_all_after(&body, "https://gleam.io/") != "" {
+        let url = get_url(get_all_after(&body, "https://gleam.io/"));
+        body = get_all_after(&body, "https://gleam.io/");
+        let url = if url.len() >= 20 {
+            format!("https://gleam.io/{}", &url[..20])
+        } else if !url.is_empty() {
+            format!("https://gleam.io/{}", url)
+        } else {
+            continue;
+        };
+        if !rep.contains(&url) {
+            rep.push(url);
+        }
+    }
+    let mut final_rep = Vec::new();
+    for url in rep {
+        if let Some(id) = crate::gleam::get_gleam_id(&url) {
+            final_rep.push(format!("https://gleam.io/{}/-", id));
+        }
+    }
+    Ok(final_rep)
+}
+
+#[cfg(test)]
+mod test {
+    use super::resolve;
+
+    #[test]
+    fn resolving() {
+        assert_eq!(resolve("https://www.youtube.com/watch?v=-DS1qgHjoJY").unwrap().len(), 1);
+        assert_eq!(resolve("https://news.nestia.com/detail/Oculus-Quest-2---Infinite-Free-Games!/5222508").unwrap().len(), 1);
     }
 }
