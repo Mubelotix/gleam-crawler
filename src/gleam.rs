@@ -41,25 +41,18 @@ pub fn fetch(url: &str) -> Result<SearchResult, Error> {
     {
         Ok(response) => response,
         Err(e) => {
-            eprintln!("Failed to load {}: {}", url, e);
             return Err(Error::NetworkError(e));
         },
     };
 
     let body = match response.as_str() {
         Ok(body) => body,
-        Err(e) => {
-            eprintln!("Failed to read {}: {}", url, e);
-            return Err(Error::NetworkError(e));
-        }
+        Err(e) => return Err(Error::NetworkError(e)),
     };
 
     let (giveaway, entry_count) = match format::parsing::parse_html(body) {
         Ok((giveaway, _, entry_count)) => (giveaway, entry_count),
-        Err(e) => {
-            eprintln!("Failed to parse {}: {:?}", url, e);
-            return Err(Error::ParseError(e));
-        }
+        Err(e) => return Err(Error::ParseError(e)),
     };
     
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -84,7 +77,7 @@ pub fn fetch(url: &str) -> Result<SearchResult, Error> {
 mod tests {
     use std::{thread::sleep, time::Duration};
     use super::*;
-    
+
     #[test]
     fn test_giveaway_struct() {
         let giveaway =

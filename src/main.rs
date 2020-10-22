@@ -4,15 +4,14 @@ mod crawler;
 mod config;
 mod google;
 mod gleam;
+mod meilisearch;
+mod database;
 use config::*;
 use stats::*;
 use crawler::launch;
+use meilisearch::init_meilisearch;
 
 fn backup() {
-
-}
-
-fn init_meilisearch() {
 
 }
 
@@ -49,7 +48,7 @@ async fn main() {
 
     match matches.subcommand() {
         ("stats", Some(_args)) => stats(config),
-        ("init_meilisearch", Some(_args)) => init_meilisearch(),
+        ("init_meilisearch", Some(_args)) => init_meilisearch(&config).await,
         ("configurate", Some(_args)) => configurate(),
         ("backup", Some(_args)) => backup(),
         ("launch", Some(args)) => {

@@ -1,235 +1,206 @@
-use crate::{config::*, google, gleam};
+use crate::{config::*, google, gleam, meilisearch::*, database::*};
 use std::{collections::HashMap, time::{Instant, Duration, SystemTime}, thread::sleep};
 use progress_bar::{color::*, progress_bar::ProgressBar};
-use serde::{Serialize, Deserialize};
-use url::{Url, Host};
-use format::prelude::*;
+use url::Url;
+use format::{prelude::*, parsing::*};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Record {
-    url: String,
-    referers: Vec<String>
+fn url_to_host(url: &str) -> String {
+    if let Ok(url) = &Url::parse(url) {
+        url.host_str().unwrap_or("unknown").to_string()
+    } else {
+        "unknown".to_string()
+    }
 }
 
-struct IntermediaryUrl {
-    url: String,
-    domain: Option<Url>
-}
-
-impl IntermediaryUrl {
-    fn new_from_vec(urls: Vec<String>) -> Vec<Self> {
-        let mut result: Vec<Self> = Vec::new();
-        for url in urls {
-            result.push(IntermediaryUrl::new(url));
-        }
-        result
-    }
-
-    fn new(url: String) -> Self {
-        let mut result = Self {
-            url,
-            domain: None,
-        };
-        result.init();
-        result
-    }
-
-    fn init(&mut self) {
-        if let Ok(domain) = Url::parse(&self.url) {
-            self.domain = Some(domain)
+fn search_google_results(cooldown: u64) -> Vec<String> {
+    let mut progress_bar = ProgressBar::new(7);
+    progress_bar.set_action("Searching", Color::White, Style::Normal);
+    let mut results = Vec::new();
+    let mut page = 0;
+    loop {
+        progress_bar.set_action("Loading", Color::Blue, Style::Normal);
+        progress_bar.print_info("Getting", &format!("the results page {}", page), Color::Blue, Style::Normal);
+        let new_results = google::search(page).unwrap_or_default();
+        if !new_results.is_empty() {
+            for new_result in new_results {
+                results.push(new_result);
+            }
+            page += 1;
+            progress_bar.inc();
+            progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
+            sleep(Duration::from_secs(cooldown));
         } else {
-            self.domain = None
+            break;
         }
     }
+    progress_bar.set_action("Finished", Color::Green, Style::Bold);
+    progress_bar.print_info("Finished", &format!("{} results found", results.len()), Color::Green, Style::Bold);
+    progress_bar.finalize();
+    println!();
 
-    fn get_host(&self) -> Host<&str> {
-        if let Some(domain) = self.domain.as_ref() {
-            if let Some(host) = domain.host() {
-                return host;
+    results
+}
+
+fn load_results(results: Vec<String>, config: &Config, giveaways: &mut HashMap<String, SearchResult>, outdated_meilisearch: &mut Vec<String>, fast: bool) {
+    let cooldown = config.cooldown as u64;
+
+    let mut progress_bar = ProgressBar::new(results.len());
+    let mut timeout_check = HashMap::new();
+    let mut last_gleam_request = Instant::now();
+    progress_bar.set_action("Loading", Color::White, Style::Normal);
+    for result in &results {
+        // Check the cooldown
+        if let Some(last_load_time) = timeout_check.get(&url_to_host(&result)) {
+            let time_since_last_load = Instant::now() - *last_load_time;
+            if time_since_last_load < Duration::from_secs(cooldown) {
+                let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
+                progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal); 
+                sleep(time_to_sleep);
             }
         }
-        Host::Domain("undefined")
-    }
+        
+        // Load the page
+        progress_bar.set_action("Loading", Color::Blue, Style::Normal);
+        let giveaway_urls = match resolve(result) {
+            Ok(urls) => urls,
+            Err(e) => {
+                progress_bar.print_info("Error", &format!("when trying to load {}: {}", result, e), Color::Red, Style::Normal);
+                continue;
+            }
+        };
 
-    fn get_url(&self) -> &str {
-        &self.url
+        // Blame the page if asked
+        if giveaway_urls.is_empty() && config.blame_useless_pages {
+            progress_bar.print_info("Useless", &format!("page loaded: {}", result), Color::Yellow, Style::Normal);
+        }
+
+        // Use the data
+        for gleam_link in giveaway_urls {
+            // Check if the url is valid and if we did not load this before
+            if let Some(key) = gleam::get_gleam_id(&gleam_link) {
+                if giveaways.contains_key(key) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            if !fast {
+                let time_since_last_load = Instant::now() - last_gleam_request;
+                if time_since_last_load < Duration::from_secs(cooldown) {
+                    let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
+                    progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
+                    sleep(time_to_sleep);
+                }
+
+                progress_bar.set_action("Loading", Color::Blue, Style::Normal);
+                if let Ok(giveaway) = gleam::fetch(&gleam_link) {
+                    last_gleam_request = Instant::now();
+                    progress_bar.print_info("Found", &format!("{} {:>8} entries - {}", giveaway.get_url(), if let Some(entry_count) = giveaway.entry_count { entry_count.to_string() } else {String::from("unknow")}, giveaway.get_name()), Color::LightGreen, Style::Bold);
+                    outdated_meilisearch.push(giveaway.giveaway.campaign.key.clone());
+                    giveaways.insert(giveaway.giveaway.campaign.key.clone(), giveaway);
+                    
+                }
+            } else {
+                progress_bar.print_info("Found", &gleam_link, Color::LightGreen, Style::Bold);
+            }
+        }
+        
+        progress_bar.inc();
+        timeout_check.insert(url_to_host(result), Instant::now());
     }
+    progress_bar.set_action("Finished", Color::Green, Style::Bold);
+    progress_bar.print_info("Finished", &format!("{} giveaways found", giveaways.len()), Color::Green, Style::Bold);
+    progress_bar.finalize();
+    println!();
+}
+
+fn update_giveaways(to_update: Vec<String>, giveaways: &mut HashMap<String, SearchResult>, outdated_meilisearch: &mut Vec<String>, cooldown: u64) {
+    let len = to_update.len();
+    let mut progress_bar = ProgressBar::new(len);
+    for key in to_update {
+        progress_bar.set_action("Updating", Color::Blue, Style::Normal);
+        let mut old_giveaway = giveaways.remove(&key).unwrap();
+        outdated_meilisearch.push(key.clone());
+
+        match gleam::fetch(&old_giveaway.get_url()) {
+            Ok(updated) => {
+                let giveaway = old_giveaway + updated;
+                giveaways.insert(key, giveaway);
+            },
+            Err(gleam::Error::ParseError(ParseError::GiveawayJsonNotFound)) => {
+                progress_bar.print_info("Missing", &format!("giveaway {} -> removing", old_giveaway.get_url()), Color::Red, Style::Blink);
+            }
+            Err(gleam::Error::ParseError(e)) => {
+                progress_bar.print_info("Invalid", &format!("giveaway {}: {:?}", old_giveaway.get_url(), e), Color::Red, Style::Blink);
+                old_giveaway.last_updated = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                giveaways.insert(key, old_giveaway);
+            }
+            Err(gleam::Error::NetworkError(_e)) => {
+                progress_bar.print_info("Timeout", "Failed to load giveaway (giveaway has not been updated)", Color::Yellow, Style::Bold);
+                giveaways.insert(key, old_giveaway);
+                sleep(Duration::from_secs(10));
+            }
+            Err(gleam::Error::InvalidGleamUrl) => {
+                progress_bar.print_info("Invalid", &format!("url {} (this code is almost unreachable)", old_giveaway.get_url()), Color::Red, Style::Blink);
+            }
+        }
+        progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
+        progress_bar.inc();
+        sleep(Duration::from_secs(cooldown));
+    }
+    progress_bar.print_info("Finished", &format!("{} giveaways updated", len), Color::Green, Style::Bold);
+    progress_bar.set_action("Finished", Color::Green, Style::Bold);
+    progress_bar.finalize();
+    println!();
 }
 
 pub async fn launch(config: Config, fast: bool) {
     std::env::set_var("MINREQ_TIMEOUT", config.timeout.to_string());
     let cooldown = config.cooldown as u64;
 
+    if matches!(config.meilisearch.as_ref().map(|m| m.init_on_launch), Some(true)) {
+        println!("Initializing the MeiliSearch index...");
+        init_meilisearch(&config).await;
+        println!("Done!");
+    }
+    
     loop {
         let mut giveaways: HashMap<String, SearchResult> = HashMap::new();
+        let mut outdated_meilisearch = Vec::new();
         let start = Instant::now();
 
-        let mut progress_bar = ProgressBar::new(7);
-        progress_bar.set_action("Searching", Color::White, Style::Normal);
-        let mut results = Vec::new();
-        let mut page = 0;
-        loop {
-            progress_bar.set_action("Loading", Color::Blue, Style::Normal);
-            progress_bar.print_info("Getting", &format!("the results page {}", page), Color::Blue, Style::Normal);
-            let new_results = google::search(page).unwrap_or_default();
-            if !new_results.is_empty() {
-                results.append(&mut IntermediaryUrl::new_from_vec(new_results));
-                page += 1;
-                progress_bar.inc();
-                progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
-                sleep(Duration::from_secs(cooldown));
-            } else {
-                break;
-            }
-        }
-        progress_bar.set_action("Finished", Color::Green, Style::Bold);
-        progress_bar.print_info("Finished", &format!("{} results found", results.len()), Color::Green, Style::Bold);
-        progress_bar.finalize();
+        // Search results on google
+        let results = search_google_results(cooldown);
 
-        let mut progress_bar = ProgressBar::new(results.len());
-        let mut timeout_check = HashMap::new();
-        let mut last_gleam_request = Instant::now();
-        progress_bar.set_action("Loading", Color::White, Style::Normal);
-        for link_idx in 0..results.len() {
-            // verifying if the cooldown is respected
-            if let Some(last_load_time) = timeout_check.get(&results[link_idx].get_host()) {
-                let time_since_last_load = Instant::now() - *last_load_time;
-                if time_since_last_load < Duration::from_secs(cooldown) {
-                    let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
-                    progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal); 
-                    sleep(time_to_sleep);
+        // Load the results
+        load_results(results, &config, &mut giveaways, &mut outdated_meilisearch, fast);
+
+        if fast { break; }
+
+        // Read the database
+        read_database(&mut giveaways, &config);
+
+        // Select the oldest giveaways to update them
+        let mut to_update = Vec::new();
+        if config.update > 0 {
+            let mut giveaways = giveaways.iter().map(|(_i, g)| g).collect::<Vec<&SearchResult>>();
+            giveaways.sort_by_key(|g| g.last_updated);
+            for idx in 0..config.update {
+                if let Some(giveaway) = giveaways.get(idx) {
+                    to_update.push(giveaway.giveaway.campaign.key.clone())
                 }
             }
-            
-            progress_bar.set_action("Loading", Color::Blue, Style::Normal);
-            let giveaway_urls = resolve(results[link_idx].get_url()).unwrap_or_default();
-            if giveaway_urls.is_empty() {
-                progress_bar.print_info("Useless", &format!("page loaded: {}", results[link_idx].get_url()), Color::Yellow, Style::Normal);
-            }
-            for gleam_link in giveaway_urls {
-                if !fast {
-                    let time_since_last_load = Instant::now() - last_gleam_request;
-                    if time_since_last_load < Duration::from_secs(cooldown) {
-                        let time_to_sleep = Duration::from_secs(cooldown) - time_since_last_load;
-                        progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
-                        sleep(time_to_sleep);
-                    }
-
-                    progress_bar.set_action("Loading", Color::Blue, Style::Normal);
-                    if let Ok(giveaway) = gleam::fetch(&gleam_link) {
-                        last_gleam_request = Instant::now();
-                        progress_bar.print_info("Found", &format!("{} {:>8} entries - {}", giveaway.get_url(), if let Some(entry_count) = giveaway.entry_count { entry_count.to_string() } else {String::from("unknow")}, giveaway.get_name()), Color::LightGreen, Style::Bold);
-                        giveaways.insert(gleam_link, giveaway);
-                    }
-                } else {
-                    progress_bar.print_info("Found", &gleam_link, Color::LightGreen, Style::Bold);
-                }
-            }
-            
-            progress_bar.inc();
-            timeout_check.insert(results[link_idx].get_host(), Instant::now());
         }
-        progress_bar.set_action("Finished", Color::Green, Style::Bold);
-        progress_bar.print_info("Finished", &format!("{} giveaways found", giveaways.len()), Color::Green, Style::Bold);
-        progress_bar.finalize();
-        println!();
         
-        if !fast {
-            use std::fs::File;
-            use std::io::prelude::*;
+        // Update the oldest giveaways
+        update_giveaways(to_update, &mut giveaways, &mut outdated_meilisearch, cooldown);
 
-            match File::open("giveaways.json") {
-                Ok(mut file) => {
-                    let mut content = String::new();
-                    match file.read_to_string(&mut content) {
-                        Ok(_) => match serde_json::from_str::<Vec<SearchResult>>(&content) {
-                            Ok(saved_giveaways) => for saved_giveaway in saved_giveaways {
-                                if giveaways.get(&saved_giveaway.giveaway.campaign.key).is_none() {
-                                    giveaways.insert(saved_giveaway.get_url(), saved_giveaway);
-                                }
-                            },
-                            Err(e) => eprintln!("Can't deserialize save file: {}", e)
-                        }
-                        Err(e) => eprintln!("Can't read save file: {}", e)
-                    }
-                },
-                Err(e) => eprintln!("Can't open save file: {}", e)
-            }
+        // Save the database
+        save_database(&giveaways, &config);
 
-            let mut giveaways = giveaways.drain().map(|(_i, g)| g).collect::<Vec<SearchResult>>();
-            if config.update > 0 {
-                giveaways.sort_by_key(|g| g.last_updated);
-            
-                let mut len = 0;
-                let mut indexes_to_update: Vec<usize> = giveaways.iter().enumerate().filter(|(_idx, g)| g.last_updated < g.giveaway.campaign.ends_at).map(|(idx, _g)| idx).filter(|_idx| if len < config.update {len += 1; true} else {false}).collect();
-                indexes_to_update.reverse();
-                
-                let mut progress_bar = ProgressBar::new(len);
-                for idx in indexes_to_update {
-                    progress_bar.set_action("Updating", Color::Blue, Style::Normal);
-                    match gleam::fetch(&giveaways[idx].get_url()) {
-                        Ok(updated) => giveaways[idx] = updated,
-                        Err(gleam::Error::ParseError(e)) => {
-                            progress_bar.print_info("Invalid", &format!("giveaway {} (giveaway should be removed)", giveaways[idx].get_url()), Color::Red, Style::Bold);
-                            //giveaways.remove(idx);
-                        }
-                        Err(gleam::Error::NetworkError(_e)) => {
-                            progress_bar.print_info("Timeout", "Failed to load giveaway (giveaway has not been updated)", Color::Red, Style::Bold);
-                            sleep(Duration::from_secs(10));
-                        }
-                        Err(e) => unreachable!(),
-                    }
-                    progress_bar.set_action("Sleeping", Color::Yellow, Style::Normal);
-                    progress_bar.inc();
-                    sleep(Duration::from_secs(cooldown));
-                }
-                progress_bar.print_info("Finished", &format!("{} giveaways updated", len), Color::Green, Style::Bold);
-                progress_bar.set_action("Finished", Color::Green, Style::Bold);
-                progress_bar.finalize();
-                println!();
-            }
-
-            match File::create("giveaways.json") {
-                Ok(mut file) => {
-                    match serde_json::to_string(&giveaways) {
-                        Ok(data) => match file.write(data.as_bytes()) {
-                            Ok(_) => (),
-                            Err(e) => eprintln!("Can't write to file: {}", e)
-                        },
-                        Err(e) => eprintln!("Can't serialize data: {}", e)
-                    }
-                }
-                Err(e) => eprintln!("Can't open save file: {}", e)
-            }
-
-            if !fast {
-                let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-                giveaways.retain(|g| g.giveaway.campaign.ends_at > timestamp);
-                
-                use meilisearch_sdk::client::Client;
-                #[allow(clippy::ptr_arg)]
-                async fn update_database(meili_host: &str, meili_key: &str, meili_index: &str, running_giveaways: &Vec<SearchResult>) {
-                    let client = Client::new(meili_host, meili_key);
-                    let index = match client.get_or_create(meili_index).await {
-                        Ok(index) => index,
-                        Err(e) => {
-                            eprintln!("Meilisearch error while initializing the index: {:?}", e);
-                            return;
-                        },
-                    };
-                    if let Err(e) = index.delete_all_documents().await {
-                        eprintln!("Meilisearch error while deleting documents: {:?}", e);
-                        return;
-                    };
-                    if let Err(e) = index.add_documents(running_giveaways, Some("gleam_id")).await {
-                        eprintln!("Meilisearch error while adding documents: {:?}", e);
-                        return;
-                    };
-                }
-                
-                update_database(&config.meilisearch.host, &config.meilisearch.key, &config.meilisearch.index, &giveaways).await;
-            }
-        }
+        // Update meilisearch index
+        update_meilisearch(giveaways, &config, outdated_meilisearch).await;
 
         if !fast {
             let time_elapsed = Instant::now().duration_since(start);
@@ -269,18 +240,12 @@ pub fn resolve(url: &str) -> Result<Vec<String>, minreq::Error> {
         .send()
     {
         Ok(response) => response,
-        Err(e) => {
-            eprintln!("Failed to load {}: {}", url, e);
-            return Err(e);
-        },
+        Err(e) => return Err(e),
     };
 
     let mut body = match response.as_str() {
         Ok(body) => body,
-        Err(e) => {
-            eprintln!("Failed to load {}: {}", url, e);
-            return Err(e);
-        },
+        Err(e) => return Err(e),
     };
 
     let mut rep = Vec::new();

@@ -1,9 +1,11 @@
 timeout = 7
 update = 0
 cooldown = 6
+blame_useless_pages = true
 database_file = "new_giveaways.json"
 
 [meilisearch]
 host = "http://localhost:7700"
-index = "test"
+index = "giveaways"
 key = ""
+init_on_launch = false
